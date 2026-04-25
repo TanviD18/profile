@@ -127,6 +127,10 @@ function setupStartReveal(navigationController) {
     let started = false;
     let highestRevealedIndex = 0;
     let transitionRunning = false;
+    let touchStartY = null;
+    let wheelGestureActive = false;
+    let wheelDeltaAccumulator = 0;
+    let revealUnlockTimerId = null;
 
     const revealCardAt = (index) => {
         const card = cards[index];
@@ -143,53 +147,164 @@ function setupStartReveal(navigationController) {
         });
     };
 
-    const unlockNextCard = () => {
+    const unlockNextCard = async () => {
         const nextIndex = highestRevealedIndex + 1;
+        const currentCard = cards[highestRevealedIndex];
         const nextCard = cards[nextIndex];
-        if (!nextCard || !nextCard.hidden) {
+        if (!currentCard || !nextCard || !nextCard.hidden || transitionRunning) {
             return;
         }
 
+        transitionRunning = true;
         highestRevealedIndex = nextIndex;
         revealCardAt(nextIndex);
+        nextCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        await runStarTransition(currentCard, nextCard);
+        transitionRunning = false;
+        releaseRevealLock();
     };
 
-    const observer = new IntersectionObserver(
-        (entries) => {
-            entries.forEach((entry) => {
-                if (!entry.isIntersecting || !started) {
-                    return;
-                }
-
-                const index = cards.indexOf(entry.target);
-                if (index === highestRevealedIndex) {
-                    unlockNextCard();
-                }
-            });
-        },
-        {
-            threshold: 0.72
+    const triggerNextCardReveal = () => {
+        if (!started || transitionRunning) {
+            return;
         }
-    );
 
-    cards.forEach((card) => observer.observe(card));
+        unlockNextCard();
+    };
 
-    const runStarTransition = () => {
-        if (!heroName || !aboutCard || !transitionStar) {
+    const hasHiddenNextCard = () => Boolean(cards[highestRevealedIndex + 1]?.hidden);
+
+    const resetWheelGesture = () => {
+        if (revealUnlockTimerId) {
+            clearTimeout(revealUnlockTimerId);
+            revealUnlockTimerId = null;
+        }
+
+        wheelGestureActive = false;
+        wheelDeltaAccumulator = 0;
+    };
+
+    const releaseRevealLock = () => {
+        if (revealUnlockTimerId) {
+            clearTimeout(revealUnlockTimerId);
+        }
+
+        revealUnlockTimerId = window.setTimeout(() => {
+            resetWheelGesture();
+        }, 140);
+    };
+
+    const resetRevealSequence = () => {
+        resetWheelGesture();
+        highestRevealedIndex = 0;
+        stage.hidden = true;
+        stage.classList.remove('is-visible');
+
+        cards.forEach((card, index) => {
+            card.hidden = index !== 0;
+            card.classList.remove('is-visible', 'is-current');
+        });
+    };
+
+    window.addEventListener('wheel', (event) => {
+        if (!started || !hasHiddenNextCard() || event.deltaY <= 16) {
+            return;
+        }
+
+        event.preventDefault();
+
+        if (wheelGestureActive) {
+            return;
+        }
+
+        wheelDeltaAccumulator += event.deltaY;
+        if (wheelDeltaAccumulator < 70) {
+            return;
+        }
+
+        wheelGestureActive = true;
+        wheelDeltaAccumulator = 0;
+        triggerNextCardReveal();
+    }, { passive: false });
+
+    window.addEventListener('touchstart', (event) => {
+        touchStartY = event.touches[0]?.clientY ?? null;
+    }, { passive: true });
+
+    window.addEventListener('touchend', (event) => {
+        if (touchStartY === null) {
+            return;
+        }
+
+        const touchEndY = event.changedTouches[0]?.clientY ?? touchStartY;
+        const deltaY = touchStartY - touchEndY;
+        touchStartY = null;
+
+        if (deltaY > 40) {
+            wheelGestureActive = true;
+            wheelDeltaAccumulator = 0;
+            triggerNextCardReveal();
+        }
+    }, { passive: true });
+
+    window.addEventListener('keydown', (event) => {
+        if (!['ArrowDown', 'PageDown', ' '].includes(event.key)) {
+            return;
+        }
+
+        if (event.target instanceof HTMLElement) {
+            const tagName = event.target.tagName;
+            if (tagName === 'INPUT' || tagName === 'TEXTAREA') {
+                return;
+            }
+        }
+
+        if (!started || !hasHiddenNextCard()) {
+            return;
+        }
+
+        event.preventDefault();
+        if (wheelGestureActive) {
+            return;
+        }
+
+        wheelGestureActive = true;
+        wheelDeltaAccumulator = 0;
+        triggerNextCardReveal();
+    });
+
+    const runStarTransition = (fromElement, toElement) => {
+        if (!fromElement || !toElement || !transitionStar) {
             return Promise.resolve();
         }
 
-        const from = heroName.getBoundingClientRect();
-        const to = aboutCard.getBoundingClientRect();
+        const getPath = () => {
+            const from = fromElement.getBoundingClientRect();
+            const to = toElement.getBoundingClientRect();
+            const targetX = to.left + Math.min(54, to.width * 0.12);
 
-        const targetAnchorX = to.left + Math.min(54, to.width * 0.12);
-        const startRangeMin = from.left + 10;
-        const startRangeMax = from.right - 10;
-        const dropX = Math.min(startRangeMax, Math.max(startRangeMin, targetAnchorX));
-        const startY = from.top + from.height * 0.55;
+            if (fromElement === heroName) {
+                const startRangeMin = from.left + 10;
+                const startRangeMax = from.right - 10;
+
+                return {
+                    startX: Math.min(startRangeMax, Math.max(startRangeMin, targetX)),
+                    startY: from.top + from.height * 0.55,
+                    endX: targetX,
+                    endY: to.top + Math.min(46, to.height * 0.22)
+                };
+            }
+
+            return {
+                startX: from.left + Math.min(54, from.width * 0.12),
+                startY: from.bottom - Math.min(36, from.height * 0.18),
+                endX: targetX,
+                endY: to.top + Math.min(46, to.height * 0.22)
+            };
+        };
 
         return new Promise((resolve) => {
-            const duration = 1700;
+            const duration = fromElement === heroName ? 1700 : 980;
             const startTime = performance.now();
             const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
             const clamp01 = (value) => Math.max(0, Math.min(1, value));
@@ -197,15 +312,15 @@ function setupStartReveal(navigationController) {
             const step = (now) => {
                 const progress = Math.min((now - startTime) / duration, 1);
                 const easedDrop = easeOutCubic(progress);
-                const currentTarget = aboutCard.getBoundingClientRect();
-                const endY = currentTarget.top + Math.min(46, currentTarget.height * 0.22);
-                const y = startY + (endY - startY) * easedDrop;
+                const path = getPath();
+                const x = path.startX + (path.endX - path.startX) * easedDrop;
+                const y = path.startY + (path.endY - path.startY) * easedDrop;
 
                 const opacity = clamp01(1 - progress);
                 const scale = 0.95 - progress * 0.42;
 
                 transitionStar.style.opacity = String(Math.max(0, Math.min(1, opacity)));
-                transitionStar.style.transform = `translate3d(${dropX}px, ${y}px, 0) scale(${Math.max(0.45, scale)})`;
+                transitionStar.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${Math.max(0.45, scale)})`;
                 transitionStar.style.filter = `blur(${progress * 0.55}px)`;
 
                 if (progress < 1) {
@@ -230,14 +345,12 @@ function setupStartReveal(navigationController) {
         transitionRunning = true;
 
         if (started) {
-            cards[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
-            await runStarTransition();
-            transitionRunning = false;
-            return;
+            resetRevealSequence();
+        } else {
+            started = true;
+            document.body.classList.add('profile-started');
         }
 
-        started = true;
-        document.body.classList.add('profile-started');
         stage.hidden = false;
         highestRevealedIndex = 0;
         revealCardAt(0);
@@ -251,8 +364,9 @@ function setupStartReveal(navigationController) {
 
         cards[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-        await runStarTransition();
+        await runStarTransition(heroName, aboutCard);
         transitionRunning = false;
+        releaseRevealLock();
     };
 
     startButton.addEventListener('click', revealProfile);
@@ -271,9 +385,77 @@ function setupContactForm() {
     });
 }
 
+function setupScrollPlayfulness() {
+    const cards = Array.from(document.querySelectorAll('.content-card'));
+
+    if (!cards.length) {
+        return;
+    }
+
+    let ticking = false;
+
+    const updateScrollState = () => {
+        const doc = document.documentElement;
+        const scrollableHeight = Math.max(doc.scrollHeight - window.innerHeight, 1);
+        const scrollProgress = Math.min(window.scrollY / scrollableHeight, 1);
+
+        document.body.style.setProperty('--scroll-progress', scrollProgress.toFixed(4));
+
+        const visibleCards = cards.filter((card) => !card.hidden);
+        let currentCard = visibleCards[0] || null;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        const viewportAnchor = window.innerHeight * 0.42;
+
+        visibleCards.forEach((card) => {
+            const bounds = card.getBoundingClientRect();
+            const cardCenter = bounds.top + bounds.height / 2;
+            const distance = Math.abs(cardCenter - viewportAnchor);
+
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                currentCard = card;
+            }
+        });
+
+        cards.forEach((card) => {
+            card.classList.toggle('is-current', card === currentCard);
+        });
+
+        if (currentCard) {
+            const bounds = currentCard.getBoundingClientRect();
+            const spotlightY = Math.max(16, Math.min(window.innerHeight - 40, bounds.top + bounds.height / 2));
+            document.body.style.setProperty('--spotlight-y', `${spotlightY}px`);
+        }
+
+        ticking = false;
+    };
+
+    const requestTick = () => {
+        if (ticking) {
+            return;
+        }
+
+        ticking = true;
+        requestAnimationFrame(updateScrollState);
+    };
+
+    window.addEventListener('scroll', requestTick, { passive: true });
+    window.addEventListener('resize', requestTick);
+    requestTick();
+
+    return {
+        refresh: requestTick
+    };
+}
+
 window.addEventListener("load", () => {
     typewriterEffect();
     const navigationController = setupNavigation();
+    const scrollPlayfulnessController = setupScrollPlayfulness();
     setupStartReveal(navigationController);
     setupContactForm();
+
+    if (scrollPlayfulnessController) {
+        scrollPlayfulnessController.refresh();
+    }
 });

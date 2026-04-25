@@ -13,6 +13,8 @@
     --accent: #58a6ff;
     --accent-soft: rgba(88, 166, 255, 0.16);
     --shadow: 0 12px 30px rgba(1, 4, 9, 0.45);
+    --scroll-progress: 0;
+    --spotlight-y: 40vh;
 }
 
 html {
@@ -28,6 +30,13 @@ body {
     font-family: "Space Grotesk", sans-serif;
     overflow-x: hidden;
     scroll-snap-type: y proximity;
+}
+
+body.profile-started {
+    background:
+        radial-gradient(circle at 80% var(--spotlight-y), rgba(88, 166, 255, 0.14), transparent 20%),
+        radial-gradient(circle at 50% 100%, rgba(88, 166, 255, 0.12), transparent 34%),
+        linear-gradient(180deg, #060913 0%, #0b1324 46%, #0d1117 100%);
 }
 
 .space-overlay {
@@ -58,6 +67,55 @@ body {
         linear-gradient(180deg, transparent 0%, rgba(24, 45, 89, 0.48) 75%, rgba(36, 78, 150, 0.35) 100%);
     transform: translateY(38vh);
     animation: riseUp 1.8s ease forwards;
+}
+
+.scroll-aurora {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0;
+    background:
+        radial-gradient(circle at 80% var(--spotlight-y), rgba(114, 194, 255, 0.24), transparent 20%),
+        radial-gradient(circle at 24% calc(var(--spotlight-y) + 10vh), rgba(88, 166, 255, 0.1), transparent 18%);
+    transition: opacity 240ms ease;
+}
+
+body.profile-started .scroll-aurora {
+    opacity: 1;
+}
+
+.scroll-progress {
+    position: fixed;
+    top: 50%;
+    right: clamp(0.6rem, 1vw, 1rem);
+    transform: translateY(-50%);
+    width: 10px;
+    height: min(36vh, 280px);
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(11, 19, 36, 0.45);
+    backdrop-filter: blur(6px);
+    overflow: hidden;
+    z-index: 25;
+    opacity: 0;
+    transition: opacity 220ms ease;
+    display: flex;
+    align-items: flex-end;
+}
+
+body.profile-started .scroll-progress {
+    opacity: 1;
+}
+
+.scroll-progress-line {
+    display: block;
+    width: 100%;
+    height: calc(var(--scroll-progress) * 100%);
+    border-radius: inherit;
+    background: linear-gradient(180deg, rgba(217, 236, 255, 0.92) 0%, rgba(88, 166, 255, 0.92) 100%);
+    box-shadow: 0 0 18px rgba(88, 166, 255, 0.35);
+    transition: height 180ms ease;
 }
 
 @keyframes riseUp {
@@ -308,12 +366,35 @@ body {
     margin: 0 auto;
     display: block;
     scroll-snap-align: center;
+    position: relative;
+    overflow: hidden;
+}
+
+.content-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(135deg, rgba(217, 236, 255, 0.08), transparent 48%, rgba(88, 166, 255, 0.08));
+    opacity: 0;
+    transition: opacity 260ms ease;
+    pointer-events: none;
 }
 
 .reveal-stage.is-visible .content-card.is-visible {
     opacity: 1;
     transform: translateY(0);
     box-shadow: 0 16px 30px rgba(1, 4, 9, 0.26);
+}
+
+.reveal-stage.is-visible .content-card.is-current {
+    transform: translateY(-4px) scale(1.01);
+    box-shadow: 0 24px 48px rgba(1, 4, 9, 0.34);
+    border-color: rgba(88, 166, 255, 0.42);
+}
+
+.reveal-stage.is-visible .content-card.is-current::before {
+    opacity: 1;
 }
 
 .content-card h2,
@@ -501,6 +582,12 @@ textarea:focus {
 }
 
 @media (max-width: 720px) {
+    .scroll-progress {
+        right: 0.45rem;
+        width: 8px;
+        height: min(28vh, 180px);
+    }
+
     .menu-toggle {
         display: block;
     }
@@ -643,6 +730,10 @@ textarea:focus {
 }
 
 @media (max-width: 480px) {
+    .scroll-progress {
+        display: none;
+    }
+
     .hero-copy-col {
         max-width: 100%;
     }
